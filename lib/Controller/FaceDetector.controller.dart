@@ -1,89 +1,303 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
+
 import 'package:camera/camera.dart';
+import 'package:facial/Components/FaceDetectorView.component.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 class FaceDetectorController extends GetxController {
   CameraController? cameraController;
+  FaceDetector? _faceDetector;
+
   final RxBool isInitialized = false.obs;
   final RxBool isProcessing = false.obs;
   final RxList<Face> faces = <Face>[].obs;
 
-  late final FaceDetector _faceDetector;
+  final RxString statusMensagem = 'Aproxime seu rosto'.obs;
+  final RxBool rostoAproximado = false.obs;
+  final RxBool isCapturing = false.obs;
 
-  @override
-  void onInit() {
-    super.onInit();
-    _initFaceDetector();
-    _initCamera();
+  bool _isInitializing = false;
+
+  bool _isDisposing = false;
+
+  int _cameraSession = 0;
+
+  Future<void> iniciarDetectorECamera() async {
+    if (_isDisposing) {
+      return;
+    }
+
+    if (isInitialized.value &&
+        cameraController != null &&
+        cameraController!.value.isInitialized) {
+      return;
+    }
+
+    if (_isInitializing) {
+      while (_isInitializing && !_isDisposing) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+
+      return;
+    }
+
+    _isInitializing = true;
+    isInitialized.value = false;
+
+    final int session = ++_cameraSession;
+
+    limparEstado();
+
+    try {
+      // ---------------------------------------------------------
+      // 1. LIMPA CÂMERA ANTIGA
+      // ---------------------------------------------------------
+      await _disposeCameraOnly();
+
+      if (_isDisposing || session != _cameraSession) {
+        return;
+      }
+
+      // ---------------------------------------------------------
+      // 2. LIMPA DETECTOR ANTIGO
+      // ---------------------------------------------------------
+      await _closeFaceDetector();
+
+      if (_isDisposing || session != _cameraSession) {
+        return;
+      }
+
+      // ---------------------------------------------------------
+      // 3. CRIA NOVO FACE DETECTOR
+      // ---------------------------------------------------------
+      final options = FaceDetectorOptions(
+        performanceMode: FaceDetectorMode.fast,
+        enableTracking: true,
+      );
+
+      _faceDetector = FaceDetector(options: options);
+
+      // ---------------------------------------------------------
+      // 4. BUSCA AS CÂMERAS
+      // ---------------------------------------------------------
+      final cameras = await availableCameras();
+
+      if (_isDisposing || session != _cameraSession) {
+        return;
+      }
+
+      if (cameras.isEmpty) {
+        throw Exception('Nenhuma câmera encontrada no dispositivo.');
+      }
+
+      final CameraDescription frontCamera = cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+
+      // ---------------------------------------------------------
+      // 5. CRIA CONTROLLER DA CÂMERA
+      // ---------------------------------------------------------
+      final CameraController newCameraController = CameraController(
+        frontCamera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: Platform.isAndroid
+            ? ImageFormatGroup.nv21
+            : ImageFormatGroup.bgra8888,
+      );
+
+      cameraController = newCameraController;
+
+      // ---------------------------------------------------------
+      // 6. INICIALIZA CÂMERA
+      // ---------------------------------------------------------
+      await newCameraController.initialize();
+
+      if (_isDisposing || session != _cameraSession) {
+        await newCameraController.dispose();
+
+        if (identical(cameraController, newCameraController)) {
+          cameraController = null;
+        }
+
+        return;
+      }
+
+      if (!newCameraController.value.isInitialized) {
+        throw Exception('A câmera não foi inicializada corretamente.');
+      }
+
+      // ---------------------------------------------------------
+      // 7. MARCA COMO INICIALIZADA
+      // ---------------------------------------------------------
+      isInitialized.value = true;
+
+      // ---------------------------------------------------------
+      // 8. INICIA STREAM
+      // ---------------------------------------------------------
+      await newCameraController.startImageStream(_processCameraImage);
+
+      if (_isDisposing || session != _cameraSession) {
+        return;
+      }
+
+      debugPrint('CÂMERA INICIALIZADA COM SUCESSO - sessão: $session');
+    } catch (e, stackTrace) {
+      debugPrint('ERRO AO INICIALIZAR CÂMERA/DETECTOR: $e');
+
+      debugPrint(stackTrace.toString());
+
+      isInitialized.value = false;
+
+      await _disposeCameraOnly();
+      await _closeFaceDetector();
+
+      cameraController = null;
+      _faceDetector = null;
+
+      statusMensagem.value = 'Não foi possível iniciar a câmera';
+    } finally {
+      _isInitializing = false;
+    }
   }
 
-  void _initFaceDetector() {
-    final options = FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.fast,
-      enableTracking: true,
-    );
-    _faceDetector = FaceDetector(options: options);
+  void limparEstado() {
+    rostoAproximado.value = false;
+    statusMensagem.value = 'Aproxime seu rosto';
+    faces.clear();
   }
 
-  Future<void> _initCamera() async {
-    final cameras = await availableCameras();
-    final frontCamera = cameras.firstWhere(
-      (cam) => cam.lensDirection == CameraLensDirection.front,
-      orElse: () => cameras.first,
-    );
+  Future<void> _processCameraImage(CameraImage image) async {
+    if (_isDisposing) {
+      return;
+    }
 
-    cameraController = CameraController(
-      frontCamera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21
-          : ImageFormatGroup.bgra8888,
-    );
+    if (isCapturing.value) {
+      return;
+    }
 
-    await cameraController!.initialize();
-    isInitialized.value = true;
+    if (isProcessing.value) {
+      return;
+    }
 
-    cameraController!.startImageStream(_processCameraImage);
-  }
+    if (_faceDetector == null) {
+      return;
+    }
 
-  void _processCameraImage(CameraImage image) async {
-    if (isProcessing.value) return;
+    if (cameraController == null || !cameraController!.value.isInitialized) {
+      return;
+    }
+
     isProcessing.value = true;
 
     try {
-      final inputImage = _inputImageFromCameraImage(image);
-      if (inputImage != null) {
-        final detectedFaces = await _faceDetector.processImage(inputImage);
-        faces.assignAll(detectedFaces);
+      final InputImage? inputImage = _inputImageFromCameraImage(image);
+
+      if (inputImage == null) {
+        return;
+      }
+
+      final FaceDetector? detector = _faceDetector;
+
+      if (detector == null) {
+        return;
+      }
+
+      final List<Face> detectedFaces = await detector.processImage(inputImage);
+
+      if (_isDisposing) {
+        return;
+      }
+
+      if (!identical(detector, _faceDetector)) {
+        return;
+      }
+
+      faces.assignAll(detectedFaces);
+
+      if (detectedFaces.isNotEmpty) {
+        final Size imageSize = Size(
+          image.width.toDouble(),
+          image.height.toDouble(),
+        );
+
+        _validarProximidadeEPosicao(detectedFaces.first, imageSize);
+      } else {
+        rostoAproximado.value = false;
+        statusMensagem.value = 'Nenhum rosto encontrado';
       }
     } catch (e) {
-      print("Erro no processamento: $e");
+      debugPrint('Erro no processamento da imagem: $e');
     } finally {
       isProcessing.value = false;
     }
   }
 
-  InputImage? _inputImageFromCameraImage(CameraImage image) {
-    if (cameraController == null) return null;
+  /// Valida tamanho e posição do rosto.
+  void _validarProximidadeEPosicao(Face face, Size imageSize) {
+    final double faceWidth = face.boundingBox.width;
+    final double faceHeight = face.boundingBox.height;
 
-    final camera = cameraController!.description;
-    final sensorOrientation = camera.sensorOrientation;
-    final imageRotation =
+    const double minSizeRatio = 0.40;
+
+    final bool tamanhoAdequado =
+        faceWidth > (imageSize.width * minSizeRatio) &&
+        faceHeight > (imageSize.width * minSizeRatio);
+
+    final double rotY = face.headEulerAngleY ?? 0;
+
+    final double rotZ = face.headEulerAngleZ ?? 0;
+
+    final bool estaDeFrente = rotY.abs() < 12 && rotZ.abs() < 12;
+
+    if (!tamanhoAdequado) {
+      rostoAproximado.value = false;
+      statusMensagem.value = 'Chegue mais perto da câmera';
+    } else if (!estaDeFrente) {
+      rostoAproximado.value = false;
+      statusMensagem.value = 'Olhe para a tela';
+    } else {
+      rostoAproximado.value = true;
+      statusMensagem.value = 'Posição ideal!';
+    }
+  }
+
+  InputImage? _inputImageFromCameraImage(CameraImage image) {
+    final CameraController? controller = cameraController;
+
+    if (controller == null || !controller.value.isInitialized) {
+      return null;
+    }
+
+    final CameraDescription camera = controller.description;
+
+    final int sensorOrientation = camera.sensorOrientation;
+
+    final InputImageRotation imageRotation =
         InputImageRotationValue.fromRawValue(sensorOrientation) ??
         InputImageRotation.rotation0deg;
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
 
-    if (format == null) return null;
+    final InputImageFormat? format = InputImageFormatValue.fromRawValue(
+      image.format.raw,
+    );
+
+    if (format == null) {
+      return null;
+    }
 
     final WriteBuffer allBytes = WriteBuffer();
+
     for (final Plane plane in image.planes) {
       allBytes.putUint8List(plane.bytes);
     }
-    final bytes = allBytes.done().buffer.asUint8List();
+
+    final Uint8List bytes = allBytes.done().buffer.asUint8List();
 
     return InputImage.fromBytes(
       bytes: bytes,
@@ -91,15 +305,192 @@ class FaceDetectorController extends GetxController {
         size: Size(image.width.toDouble(), image.height.toDouble()),
         rotation: imageRotation,
         format: format,
-        bytesPerRow: image.planes[0].bytesPerRow,
+        bytesPerRow: image.planes.first.bytesPerRow,
       ),
     );
   }
 
+  /// Encerra câmera e detector.
+  Future<void> encerrarCameraEDetector() async {
+    if (_isDisposing) {
+      return;
+    }
+
+    _isDisposing = true;
+
+    _cameraSession++;
+
+    isInitialized.value = false;
+    isProcessing.value = false;
+    isCapturing.value = false;
+
+    limparEstado();
+
+    try {
+      await _disposeCameraOnly();
+    } catch (e) {
+      debugPrint('Erro ao encerrar câmera: $e');
+    }
+
+    try {
+      await _closeFaceDetector();
+    } catch (e) {
+      debugPrint('Erro ao encerrar FaceDetector: $e');
+    }
+
+    cameraController = null;
+    _faceDetector = null;
+
+    _isInitializing = false;
+    _isDisposing = false;
+  }
+
+  /// Encerra somente a câmera.
+  Future<void> _disposeCameraOnly() async {
+    final CameraController? controller = cameraController;
+
+    if (controller == null) {
+      return;
+    }
+
+    cameraController = null;
+
+    try {
+      if (controller.value.isInitialized &&
+          controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (e) {
+      debugPrint('Erro ao parar image stream: $e');
+    }
+
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint('Erro ao fazer dispose da câmera: $e');
+    }
+  }
+
+  /// Fecha somente o FaceDetector.
+  Future<void> _closeFaceDetector() async {
+    final FaceDetector? detector = _faceDetector;
+
+    if (detector == null) {
+      return;
+    }
+
+    _faceDetector = null;
+
+    try {
+      await detector.close();
+    } catch (e) {
+      debugPrint('Erro ao fechar detector: $e');
+    }
+  }
+
+  Future<void> retomarStream() async {
+    if (_isDisposing) {
+      return;
+    }
+
+    try {
+      isCapturing.value = false;
+      limparEstado();
+
+      final CameraController? controller = cameraController;
+
+      if (controller == null || !controller.value.isInitialized) {
+        await iniciarDetectorECamera();
+        return;
+      }
+
+      if (!controller.value.isStreamingImages) {
+        await controller.startImageStream(_processCameraImage);
+      }
+
+      isInitialized.value = true;
+
+      debugPrint('Image stream retomado com sucesso.');
+    } catch (e) {
+      debugPrint('Erro ao retomar stream: $e');
+
+      isInitialized.value = false;
+
+      await iniciarDetectorECamera();
+    }
+  }
+
+  Future<XFile?> salvarFoto() async {
+    final CameraController? controller = cameraController;
+
+    if (controller == null || !controller.value.isInitialized) {
+      return null;
+    }
+
+    if (isCapturing.value) {
+      return null;
+    }
+
+    try {
+      isCapturing.value = true;
+
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+
+      final XFile file = await controller.takePicture();
+
+      return file;
+    } catch (e) {
+      debugPrint('Erro ao tirar foto: $e');
+
+      await retomarStream();
+
+      return null;
+    } finally {
+      isCapturing.value = false;
+    }
+  }
+
   @override
   void onClose() {
-    cameraController?.dispose();
-    _faceDetector.close();
+    unawaited(encerrarCameraEDetector());
+
     super.onClose();
+  }
+
+  Future<XFile?> abrirModalReconhecimentoFacial() async {
+    await iniciarDetectorECamera();
+
+    if (!isInitialized.value ||
+        cameraController == null ||
+        !cameraController!.value.isInitialized) {
+      Get.snackbar(
+        'Erro',
+        'Não foi possível iniciar a câmera.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+
+      return null;
+    }
+
+    final XFile? fotoCapturada = await Get.bottomSheet<XFile?>(
+      SizedBox(
+        height: Get.height,
+        width: Get.width,
+        child: const Scaffold(
+          backgroundColor: Colors.black,
+          body: FaceDetectionPreview(),
+        ),
+      ),
+      isScrollControlled: true,
+      enableDrag: false,
+      isDismissible: false,
+      backgroundColor: Colors.black,
+    );
+
+    print("teste vini $fotoCapturada");
+
+    return fotoCapturada;
   }
 }
