@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:facial/Components/FaceDetectorView.component.dart';
+import 'package:facial/Config/AppColors.config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -22,10 +22,11 @@ class FaceDetectorController extends GetxController {
   final RxBool isCapturing = false.obs;
 
   bool _isInitializing = false;
-
   bool _isDisposing = false;
-
   int _cameraSession = 0;
+
+  Worker? _autoCaptureWorker;
+  Timer? _countdownTimer;
 
   Future<void> iniciarDetectorECamera() async {
     if (_isDisposing) {
@@ -54,27 +55,18 @@ class FaceDetectorController extends GetxController {
     limparEstado();
 
     try {
-      // ---------------------------------------------------------
-      // 1. LIMPA CÂMERA ANTIGA
-      // ---------------------------------------------------------
       await _disposeCameraOnly();
 
       if (_isDisposing || session != _cameraSession) {
         return;
       }
 
-      // ---------------------------------------------------------
-      // 2. LIMPA DETECTOR ANTIGO
-      // ---------------------------------------------------------
       await _closeFaceDetector();
 
       if (_isDisposing || session != _cameraSession) {
         return;
       }
 
-      // ---------------------------------------------------------
-      // 3. CRIA NOVO FACE DETECTOR
-      // ---------------------------------------------------------
       final options = FaceDetectorOptions(
         performanceMode: FaceDetectorMode.fast,
         enableTracking: true,
@@ -82,9 +74,6 @@ class FaceDetectorController extends GetxController {
 
       _faceDetector = FaceDetector(options: options);
 
-      // ---------------------------------------------------------
-      // 4. BUSCA AS CÂMERAS
-      // ---------------------------------------------------------
       final cameras = await availableCameras();
 
       if (_isDisposing || session != _cameraSession) {
@@ -100,9 +89,6 @@ class FaceDetectorController extends GetxController {
         orElse: () => cameras.first,
       );
 
-      // ---------------------------------------------------------
-      // 5. CRIA CONTROLLER DA CÂMERA
-      // ---------------------------------------------------------
       final CameraController newCameraController = CameraController(
         frontCamera,
         ResolutionPreset.medium,
@@ -114,9 +100,6 @@ class FaceDetectorController extends GetxController {
 
       cameraController = newCameraController;
 
-      // ---------------------------------------------------------
-      // 6. INICIALIZA CÂMERA
-      // ---------------------------------------------------------
       await newCameraController.initialize();
 
       if (_isDisposing || session != _cameraSession) {
@@ -133,14 +116,8 @@ class FaceDetectorController extends GetxController {
         throw Exception('A câmera não foi inicializada corretamente.');
       }
 
-      // ---------------------------------------------------------
-      // 7. MARCA COMO INICIALIZADA
-      // ---------------------------------------------------------
       isInitialized.value = true;
 
-      // ---------------------------------------------------------
-      // 8. INICIA STREAM
-      // ---------------------------------------------------------
       await newCameraController.startImageStream(_processCameraImage);
 
       if (_isDisposing || session != _cameraSession) {
@@ -174,15 +151,7 @@ class FaceDetectorController extends GetxController {
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
-    if (_isDisposing) {
-      return;
-    }
-
-    if (isCapturing.value) {
-      return;
-    }
-
-    if (isProcessing.value) {
+    if (_isDisposing || isCapturing.value || isProcessing.value) {
       return;
     }
 
@@ -239,7 +208,6 @@ class FaceDetectorController extends GetxController {
     }
   }
 
-  /// Valida tamanho e posição do rosto.
   void _validarProximidadeEPosicao(Face face, Size imageSize) {
     final double faceWidth = face.boundingBox.width;
     final double faceHeight = face.boundingBox.height;
@@ -251,7 +219,6 @@ class FaceDetectorController extends GetxController {
         faceHeight > (imageSize.width * minSizeRatio);
 
     final double rotY = face.headEulerAngleY ?? 0;
-
     final double rotZ = face.headEulerAngleZ ?? 0;
 
     final bool estaDeFrente = rotY.abs() < 12 && rotZ.abs() < 12;
@@ -264,7 +231,7 @@ class FaceDetectorController extends GetxController {
       statusMensagem.value = 'Olhe para a tela';
     } else {
       rostoAproximado.value = true;
-      statusMensagem.value = 'Posição ideal!';
+      statusMensagem.value = 'Posição ideal! Mantenha parado...';
     }
   }
 
@@ -276,7 +243,6 @@ class FaceDetectorController extends GetxController {
     }
 
     final CameraDescription camera = controller.description;
-
     final int sensorOrientation = camera.sensorOrientation;
 
     final InputImageRotation imageRotation =
@@ -310,15 +276,16 @@ class FaceDetectorController extends GetxController {
     );
   }
 
-  /// Encerra câmera e detector.
   Future<void> encerrarCameraEDetector() async {
     if (_isDisposing) {
       return;
     }
 
     _isDisposing = true;
-
     _cameraSession++;
+
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
 
     isInitialized.value = false;
     isProcessing.value = false;
@@ -345,7 +312,6 @@ class FaceDetectorController extends GetxController {
     _isDisposing = false;
   }
 
-  /// Encerra somente a câmera.
   Future<void> _disposeCameraOnly() async {
     final CameraController? controller = cameraController;
 
@@ -371,7 +337,6 @@ class FaceDetectorController extends GetxController {
     }
   }
 
-  /// Fecha somente o FaceDetector.
   Future<void> _closeFaceDetector() async {
     final FaceDetector? detector = _faceDetector;
 
@@ -452,14 +417,81 @@ class FaceDetectorController extends GetxController {
     }
   }
 
-  @override
-  void onClose() {
-    unawaited(encerrarCameraEDetector());
+  // =========================================================
+  // LOGICA PARA MODO MANUAL (Com botão + Diálogo de Confirmação)
+  // =========================================================
+  Future<void> processarFotoEConfirmar() async {
+    final XFile? foto = await salvarFoto();
+    if (foto == null) return;
 
-    super.onClose();
+    final bool? desejarSalvar = await Get.dialog<bool>(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text(
+          'Confirmar Foto',
+          style: TextStyle(color: AppColors.darkBlue),
+        ),
+        content: const Text(
+          'Deseja salvar esta foto ou tirar outra?',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text(
+              'Tirar outra',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Get.back(result: true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+            ),
+            child: const Text(
+              'Salvar',
+              style: TextStyle(color: AppColors.lightGray),
+            ),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+
+    if (desejarSalvar == true) {
+      await encerrarCameraEDetector();
+      if (Get.isBottomSheetOpen ?? false) {
+        Get.back(result: foto);
+      }
+    } else if (desejarSalvar == false) {
+      await retomarStream();
+    }
+  }
+
+  // =========================================================
+  // LOGICA PARA MODO AUTOMÁTICO (Sem botão + Fecha Imediato)
+  // =========================================================
+  Future<void> processarFotoEConfirmarAutomatico() async {
+    if (isCapturing.value) return;
+
+    final XFile? foto = await salvarFoto();
+    if (foto == null) return;
+
+    await encerrarCameraEDetector();
+
+    if (Get.isBottomSheetOpen ?? false) {
+      Get.back(result: foto);
+    }
   }
 
   Future<XFile?> abrirModalReconhecimentoFacial() async {
+    _autoCaptureWorker?.dispose();
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+
     await iniciarDetectorECamera();
 
     if (!isInitialized.value ||
@@ -480,7 +512,7 @@ class FaceDetectorController extends GetxController {
         width: Get.width,
         child: const Scaffold(
           backgroundColor: Colors.black,
-          body: FaceDetectionPreview(),
+          body: FaceDetectionPreview(capturaAutomatica: false),
         ),
       ),
       isScrollControlled: true,
@@ -489,8 +521,76 @@ class FaceDetectorController extends GetxController {
       backgroundColor: Colors.black,
     );
 
-    print("teste vini $fotoCapturada");
-
     return fotoCapturada;
+  }
+
+  Future<XFile?> abrirModalReconhecimentoFacialAutomatico() async {
+    _autoCaptureWorker?.dispose();
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+
+    // Escuta o alinhamento do rosto com delay de 2 segundos
+    _autoCaptureWorker = ever(rostoAproximado, (bool detectado) {
+      if (!detectado) {
+        _countdownTimer?.cancel();
+        _countdownTimer = null;
+        return;
+      }
+
+      if (detectado && !isCapturing.value && _countdownTimer == null) {
+        _countdownTimer = Timer(const Duration(seconds: 2), () {
+          if (rostoAproximado.value && !isCapturing.value) {
+            processarFotoEConfirmarAutomatico();
+          }
+          _countdownTimer = null;
+        });
+      }
+    });
+
+    await iniciarDetectorECamera();
+
+    if (!isInitialized.value ||
+        cameraController == null ||
+        !cameraController!.value.isInitialized) {
+      _countdownTimer?.cancel();
+      _autoCaptureWorker?.dispose();
+
+      Get.snackbar(
+        'Erro',
+        'Não foi possível iniciar a câmera.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+
+      return null;
+    }
+
+    final XFile? fotoCapturada = await Get.bottomSheet<XFile?>(
+      SizedBox(
+        height: Get.height,
+        width: Get.width,
+        child: const Scaffold(
+          backgroundColor: Colors.black,
+          body: FaceDetectionPreview(capturaAutomatica: true),
+        ),
+      ),
+      isScrollControlled: true,
+      enableDrag: false,
+      isDismissible: false,
+      backgroundColor: Colors.black,
+    );
+
+    _countdownTimer?.cancel();
+    _autoCaptureWorker?.dispose();
+
+    print("retona automatico ${fotoCapturada}");
+    return fotoCapturada;
+  }
+
+  @override
+  void onClose() {
+    _countdownTimer?.cancel();
+    _autoCaptureWorker?.dispose();
+    unawaited(encerrarCameraEDetector());
+    super.onClose();
   }
 }

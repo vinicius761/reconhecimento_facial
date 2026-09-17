@@ -31,10 +31,10 @@ class ButtonbarComponent extends StatelessWidget {
       child: ElevatedButton(
         onPressed: loading ? null : onPress,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryBlue,
+          backgroundColor: AppColors.darkBlue,
           disabledBackgroundColor: backgroundColor?.withOpacity(0.6),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
         child: loading
@@ -56,7 +56,7 @@ class ButtonbarComponent extends StatelessWidget {
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 20,
                       color: AppColors.lightGray,
                       fontWeight: FontWeight.bold,
                     ),

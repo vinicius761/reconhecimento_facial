@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 class ApiClient extends GetConnect {
   @override
   void onInit() {
-    httpClient.baseUrl = 'http://192.168.57.75:8000';
+    httpClient.baseUrl = 'http://192.168.57.74:8000';
 
     httpClient.timeout = const Duration(seconds: 15);
 
@@ -14,7 +14,6 @@ class ApiClient extends GetConnect {
       debugPrint('URL: ${request.url}');
       debugPrint('Headers: ${request.headers}');
 
-      // Se for um FormData, os arquivos e campos ficam empacotados na requisição
       return request;
     });
 

@@ -46,6 +46,8 @@ class UsuarioScreen extends StatelessWidget {
                 child: Form(
                   key: controller.formKey,
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+
                     children: [
                       FormFieldComponent(
                         label: 'Nome',
@@ -97,16 +99,48 @@ class UsuarioScreen extends StatelessWidget {
                 ),
               ),
 
-              // 2. Aba de Reconhecimento (Sem o botão)
               SingleChildScrollView(
                 child: Center(
-                  child: FotoPreviewWidget(
-                    fotoRx: controller.fotoReconhecimento,
-                    onTirarFoto: () =>
-                        faceController.abrirModalReconhecimentoFacial(),
-                    labelBotaoTirar: 'Registrar foto',
-                    labelBotaoTrocar: 'Tirar outra foto',
-                    alturaPreview: 200,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Obx(
+                        () => controller.usuario.value != null
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Nome: ${controller.usuario.value!.nome}",
+                                  ),
+                                  Text("Cpf: ${controller.usuario.value!.cpf}"),
+                                  Text(
+                                    "Email: ${controller.usuario.value!.email}",
+                                  ),
+                                ],
+                              )
+                            : SizedBox.shrink(),
+                      ),
+                      FotoPreviewWidget(
+                        fotoRx: controller.fotoReconhecimento,
+                        onTirarFoto: () async {
+                          final foto = await faceController
+                              .abrirModalReconhecimentoFacialAutomatico();
+
+                          if (foto != null) {
+                            controller.fotoReconhecimento.value = foto;
+                            controller.reconhecimento();
+                            print(
+                              "okok ${controller.fotoReconhecimento.value}",
+                            );
+                          }
+                        },
+                        labelBotaoTirar: 'Registrar foto',
+                        labelBotaoTrocar: 'Tirar outra foto',
+                        alturaPreview: 200,
+                      ),
+                    ],
                   ),
                 ),
               ),

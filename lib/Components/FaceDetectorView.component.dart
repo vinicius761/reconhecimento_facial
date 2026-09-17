@@ -1,11 +1,12 @@
 import 'package:facial/Controller/FaceDetector.controller.dart';
-import 'package:facial/Config/AppColors.config.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:camera/camera.dart';
 
 class FaceDetectionPreview extends StatelessWidget {
-  const FaceDetectionPreview({super.key});
+  final bool capturaAutomatica;
+
+  const FaceDetectionPreview({super.key, this.capturaAutomatica = false});
 
   @override
   Widget build(BuildContext context) {
@@ -31,10 +32,13 @@ class FaceDetectionPreview extends StatelessWidget {
           CameraPreview(camera),
 
           // =====================================================
-          // MÁSCARA DO ROSTO
+          // MÁSCARA DO ROSTO (Fundo escuro sem a parte branca)
           // =====================================================
           ColorFiltered(
-            colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcOut),
+            colorFilter: const ColorFilter.mode(
+              Colors.black54,
+              BlendMode.srcOut,
+            ),
             child: Stack(
               children: [
                 Container(
@@ -43,14 +47,13 @@ class FaceDetectionPreview extends StatelessWidget {
                     backgroundBlendMode: BlendMode.dstOut,
                   ),
                 ),
-
                 Align(
                   alignment: Alignment.center,
                   child: Container(
                     width: 280,
                     height: 360,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: Colors.transparent,
                       borderRadius: BorderRadius.circular(180),
                     ),
                   ),
@@ -131,134 +134,61 @@ class FaceDetectionPreview extends StatelessWidget {
           ),
 
           // =====================================================
-          // BOTÃO DA CÂMERA
+          // BOTÃO DA CÂMERA (Oculto se capturaAutomatica == true)
           // =====================================================
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Obx(() {
-              final bool podeTirarFoto =
-                  controller.rostoAproximado.value &&
-                  !controller.isCapturing.value;
+          if (!capturaAutomatica)
+            Positioned(
+              bottom: 40,
+              left: 0,
+              right: 0,
+              child: Obx(() {
+                final bool podeTirarFoto =
+                    controller.rostoAproximado.value &&
+                    !controller.isCapturing.value;
 
-              return Center(
-                child: InkWell(
-                  onTap: podeTirarFoto
-                      ? () async {
-                          final XFile? foto = await controller.salvarFoto();
-
-                          if (foto == null) {
-                            return;
-                          }
-
-                          final bool? desejarSalvar = await Get.dialog<bool>(
-                            AlertDialog(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              title: const Text(
-                                'Confirmar Foto',
-                                style: TextStyle(color: AppColors.darkBlue),
-                              ),
-                              content: Text(
-                                'Deseja salvar esta foto '
-                                'ou tirar outra?',
-                                style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () {
-                                    Get.back(result: false);
-                                  },
-                                  child: const Text(
-                                    'Tirar outra',
-                                    style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                ElevatedButton(
-                                  onPressed: () {
-                                    Get.back(result: true);
-                                  },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.primaryBlue,
-                                  ),
-                                  child: const Text(
-                                    'Salvar',
-                                    style: TextStyle(
-                                      color: AppColors.lightGray,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            barrierDismissible: false,
-                          );
-
-                          // =================================================
-                          // SALVAR
-                          // =================================================
-                          if (desejarSalvar == true) {
-                            await controller.encerrarCameraEDetector();
-
-                            if (Get.isBottomSheetOpen ?? false) {
-                              Get.back(result: foto);
-                            }
-
-                            return;
-                          }
-
-                          // =================================================
-                          // TIRAR OUTRA
-                          // =================================================
-                          if (desejarSalvar == false) {
-                            await controller.retomarStream();
-                          }
-                        }
-                      : null,
-                  borderRadius: BorderRadius.circular(50),
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: podeTirarFoto ? Colors.green : Colors.grey,
-                        width: 3,
-                      ),
-                    ),
+                return Center(
+                  child: InkWell(
+                    onTap: podeTirarFoto
+                        ? () => controller.processarFotoEConfirmar()
+                        : null,
+                    borderRadius: BorderRadius.circular(50),
                     child: Container(
+                      width: 72,
+                      height: 72,
+                      padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: podeTirarFoto
-                            ? Colors.green
-                            : Colors.grey.shade400,
+                        border: Border.all(
+                          color: podeTirarFoto ? Colors.green : Colors.grey,
+                          width: 3,
+                        ),
                       ),
-                      child: controller.isCapturing.value
-                          ? const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: CircularProgressIndicator(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: podeTirarFoto
+                              ? Colors.green
+                              : Colors.grey.shade400,
+                        ),
+                        child: controller.isCapturing.value
+                            ? const Padding(
+                                padding: EdgeInsets.all(16),
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 3,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.camera_alt,
                                 color: Colors.white,
-                                strokeWidth: 3,
+                                size: 32,
                               ),
-                            )
-                          : const Icon(
-                              Icons.camera_alt,
-                              color: Colors.white,
-                              size: 32,
-                            ),
+                      ),
                     ),
                   ),
-                ),
-              );
-            }),
-          ),
+                );
+              }),
+            ),
         ],
       );
     });

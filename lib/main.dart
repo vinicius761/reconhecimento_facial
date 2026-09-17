@@ -1,5 +1,7 @@
+import 'package:facial/Binding/Login.binding.dart';
 import 'package:facial/Binding/Usuario.binding.dart';
 import 'package:facial/InitialBinding.dart';
+import 'package:facial/Screens/Login.screen.dart';
 import 'package:facial/Screens/Usuario.screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get_navigation/src/root/get_material_app.dart';
@@ -18,13 +20,18 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      initialRoute: '/usuario',
+      initialRoute: '/login',
       initialBinding: InitialBinding(),
       getPages: [
         GetPage(
           name: '/usuario',
           page: () => UsuarioScreen(),
-          binding: Usuariobinding(),
+          binding: UsuarioBinding(),
+        ),
+        GetPage(
+          name: '/login',
+          page: () => LoginScreen(),
+          binding: LoginBinding(),
         ),
       ],
     );

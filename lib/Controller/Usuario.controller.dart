@@ -16,6 +16,14 @@ class UsuarioController extends GetxController {
   TextEditingController email = TextEditingController();
   Rxn<XFile> foto = Rxn<XFile>();
   Rxn<XFile> fotoReconhecimento = Rxn<XFile>();
+  Rxn<UsuarioModel> usuario = Rxn<UsuarioModel>();
+
+  void limpaForm() {
+    nome.text = '';
+    cpf.text = '';
+    email.text = '';
+    foto.value = null;
+  }
 
   Future<void> salvar() async {
     if (!formKey.currentState!.validate()) {
@@ -42,9 +50,13 @@ class UsuarioController extends GetxController {
         ),
       );
 
+      print("teste vini ${response.statusCode}");
+
       if (response.statusCode == 200) {
-        ToastMessageComponent.success(response.body['detail']['mensagem']);
-        LimpaForm();
+        ToastMessageComponent.success(
+          "${response.body['nome']} cadastrado com sucesso!",
+        );
+        limpaForm();
         return;
       }
       ToastMessageComponent.error(response.body['detail']['mensagem']);
@@ -53,10 +65,38 @@ class UsuarioController extends GetxController {
     }
   }
 
-  LimpaForm() {
-    nome.text = '';
-    cpf.text = '';
-    email.text = '';
-    foto.value = null;
+  Future<void> reconhecimento() async {
+    try {
+      if (fotoReconhecimento.value == null) {
+        ToastMessageComponent.error(
+          'Por favor, tire uma foto para reconhecer.',
+        );
+        return;
+      }
+
+      final response = await _usuarioApi.enviarFotoReconhecimento(
+        fotoReconhecimento.value!,
+      );
+
+      if (response.statusCode == 200) {
+        final body = response.body;
+
+        // Verifica se o usuário foi realmente reconhecido pelo backend
+        if (body['reconhecido'] == true && body['usuario'] != null) {
+          usuario.value = UsuarioModel.fromJson(body['usuario']);
+          ToastMessageComponent.success(
+            'Reconhecimento realizado com sucesso!',
+          );
+        } else {
+          // Exibe a mensagem de falha retornada pela API ("Rosto não reconhecido", etc)
+          final mensagem = body['mensagem'] ?? 'Rosto não reconhecido.';
+          ToastMessageComponent.error(mensagem);
+        }
+      } else {
+        ToastMessageComponent.error('Falha ao enviar reconhecimento.');
+      }
+    } catch (e) {
+      ToastMessageComponent.error('Erro ao processar reconhecimento: $e');
+    }
   }
 }

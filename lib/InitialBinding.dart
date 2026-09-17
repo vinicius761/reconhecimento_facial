@@ -5,10 +5,7 @@ import 'package:get/get.dart';
 class InitialBinding extends Bindings {
   @override
   void dependencies() {
-    Get.lazyPut<FaceDetectorController>(
-      () => FaceDetectorController(),
-      fenix: true,
-    );
+    Get.put(FaceDetectorController(), permanent: true);
     Get.put(ApiClient(), permanent: true);
   }
 }
