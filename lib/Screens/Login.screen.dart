@@ -51,8 +51,7 @@ class LoginScreen extends StatelessWidget {
 
                   if (foto != null) {
                     controller.fotoReconhecimento.value = foto;
-                    controller.reconhecimento();
-                    print("okok ${controller.fotoReconhecimento.value}");
+                    controller.loginBiometria();
                   }
                 },
                 labelBotaoTirar: 'Entrar com biometria',

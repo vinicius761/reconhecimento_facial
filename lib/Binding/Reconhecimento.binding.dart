@@ -4,6 +4,6 @@ import 'package:get/get.dart';
 class ReconhecimentoBinding extends Bindings {
   @override
   void dependencies() {
-    Get.lazyPut<ReconhecimentoController>(() => ReconhecimentoController());
+    Get.put(ReconhecimentoController());
   }
 }

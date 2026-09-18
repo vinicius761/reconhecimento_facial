@@ -30,19 +30,23 @@ class FotoPreviewWidget extends StatelessWidget {
 
       if (foto == null) {
         return SizedBox(
-          child: InkWell(
-            onTap: () async {
-              final XFile? fotoCapturada = await onTirarFoto();
-              if (fotoCapturada != null) {
-                fotoRx.value = fotoCapturada;
-              }
-            },
-            child: DottedBorder(
-              color: AppColors.border,
-              strokeWidth: 2,
-              dashPattern: const [6, 4],
-              borderType: BorderType.RRect,
-              radius: const Radius.circular(8),
+          child: DottedBorder(
+            color: AppColors.border,
+            strokeWidth: 2,
+            dashPattern: const [6, 4],
+            borderType: BorderType.RRect,
+            radius: const Radius.circular(8),
+            child: InkWell(
+              splashColor: AppColors.lightGray,
+              highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
+              onTap: () async {
+                final XFile? fotoCapturada = await onTirarFoto();
+                if (fotoCapturada != null) {
+                  fotoRx.value = fotoCapturada;
+                }
+              },
               child: Container(
                 width: double.infinity,
                 padding: EdgeInsets.all(10),

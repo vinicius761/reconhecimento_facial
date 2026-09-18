@@ -18,9 +18,11 @@ dependencies:
   fluttertoast: ^8.2.8
   dotted_border: ^2.1.0
   flutter_dotenv: ^5.1.0
+  intl: ^0.19.0
 
 
   cupertino_icons: ^1.0.8
+  google_fonts: ^8.2.1
 
 dev_dependencies:
   flutter_test:
